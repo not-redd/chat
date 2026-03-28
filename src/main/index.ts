@@ -100,13 +100,15 @@ app.whenReady().then(() => {
 		// OpenAI-compatible chat completions endpoint
 		if (url.pathname === "/v1/chat/completions" && request.method === "POST") {
 			const body = await request.json();
-			const { messages, stream = false } = body;
+			const { messages, stream = false, extra_body } = body;
 
 			const result = streamText({
 				model,
 				messages,
-				onChunk: (chunk) => {
-					console.log("chunk", chunk);
+				providerOptions: {
+					opencode: {
+						enable_reasoning: extra_body?.enable_reasoning ?? false
+					}
 				}
 			});
 
@@ -116,20 +118,37 @@ app.whenReady().then(() => {
 				const readableStream = new ReadableStream({
 					async start(controller) {
 						try {
-							for await (const chunk of result.textStream) {
-								const data = {
-									choices: [
-										{
-											delta: { content: chunk },
-											index: 0,
-											finish_reason: null
-										}
-									]
-								};
-								controller.enqueue(
-									encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
-								);
+							// Consume fullStream to get all events including reasoning
+							for await (const chunk of result.fullStream) {
+								if (chunk.type === "text-delta") {
+									const data = {
+										choices: [
+											{
+												delta: { content: chunk.text },
+												index: 0,
+												finish_reason: null
+											}
+										]
+									};
+									controller.enqueue(
+										encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
+									);
+								} else if (chunk.type === "reasoning-delta") {
+									const data = {
+										choices: [
+											{
+												delta: { reasoning: chunk.text },
+												index: 0,
+												finish_reason: null
+											}
+										]
+									};
+									controller.enqueue(
+										encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
+									);
+								}
 							}
+
 							// Send done marker
 							controller.enqueue(encoder.encode("data: [DONE]\n\n"));
 							controller.close();

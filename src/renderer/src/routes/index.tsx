@@ -5,6 +5,7 @@ interface Message {
 	id: string;
 	role: "user" | "assistant";
 	content: string;
+	reasoning?: string;
 }
 
 export const Route = createFileRoute("/")({
@@ -25,7 +26,7 @@ function RouteComponent() {
 		scrollToBottom();
 	}, [messages]);
 
-	const handleSubmit = async (e: React.SubmitEvent) => {
+	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
 		if (!input.trim() || isLoading) return;
 
@@ -42,7 +43,8 @@ function RouteComponent() {
 		const assistantMessage: Message = {
 			id: (Date.now() + 1).toString(),
 			role: "assistant",
-			content: ""
+			content: "",
+			reasoning: ""
 		};
 
 		setMessages((prev) => [...prev, assistantMessage]);
@@ -58,7 +60,10 @@ function RouteComponent() {
 						role: m.role,
 						content: m.content
 					})),
-					stream: true
+					stream: true,
+					extra_body: {
+						enable_reasoning: true
+					}
 				})
 			});
 
@@ -69,6 +74,7 @@ function RouteComponent() {
 			const reader = response.body.getReader();
 			const decoder = new TextDecoder();
 			let accumulatedContent = "";
+			let accumulatedReasoning = "";
 
 			while (true) {
 				const { done, value } = await reader.read();
@@ -85,12 +91,25 @@ function RouteComponent() {
 						try {
 							const parsed = JSON.parse(data);
 							const content = parsed.choices?.[0]?.delta?.content;
+							const reasoning = parsed.choices?.[0]?.delta?.reasoning;
+
 							if (content) {
 								accumulatedContent += content;
 								setMessages((prev) =>
 									prev.map((m) =>
 										m.id === assistantMessage.id
 											? { ...m, content: accumulatedContent }
+											: m
+									)
+								);
+							}
+
+							if (reasoning) {
+								accumulatedReasoning += reasoning;
+								setMessages((prev) =>
+									prev.map((m) =>
+										m.id === assistantMessage.id
+											? { ...m, reasoning: accumulatedReasoning }
 											: m
 									)
 								);
@@ -137,12 +156,22 @@ function RouteComponent() {
 						}`}
 					>
 						<div
-							className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+							className={`max-w-[80%] rounded-2xl px-4 py-3 space-y-2 ${
 								message.role === "user"
 									? "bg-blue-600 text-white"
 									: "bg-gray-800 text-gray-100"
 							}`}
 						>
+							{message.reasoning && message.role === "assistant" && (
+								<details className="text-sm">
+									<summary className="cursor-pointer text-gray-400 hover:text-gray-300 font-medium">
+										Reasoning
+									</summary>
+									<div className="mt-2 p-2 bg-gray-900/50 rounded-lg text-gray-300">
+										<p className="whitespace-pre-wrap">{message.reasoning}</p>
+									</div>
+								</details>
+							)}
 							<p className="whitespace-pre-wrap">{message.content}</p>
 						</div>
 					</div>
