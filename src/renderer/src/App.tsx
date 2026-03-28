@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-}
+import type { MainMessage, Message, RenderMessage } from "../../shared/ipc-types";
+import { IPCRenderer } from "./ipc-renderer";
 
 interface AIConfig {
   url: string;
@@ -17,12 +14,15 @@ interface SettingsProps {
   onSave: (config: AIConfig) => void;
 }
 
+// Initialize IPC for type-safe communication
+const ipc = new IPCRenderer<RenderMessage, MainMessage>();
+
 function Settings({ config, onSave }: SettingsProps): React.JSX.Element {
   const [url, setUrl] = useState(config.url);
   const [apiKey, setApiKey] = useState(config.apiKey);
   const [model, setModel] = useState(config.model);
 
-  const handleSubmit = (e: React.SubmitEvent): void => {
+  const handleSubmit = (e: React.FormEvent): void => {
     e.preventDefault();
     onSave({ url, apiKey, model });
   };
@@ -90,7 +90,7 @@ function Chat({ config, onOpenSettings }: ChatProps): React.JSX.Element {
   }, [messages]);
 
   const handleSubmit = useCallback(
-    async (e: React.SubmitEvent) => {
+    async (e: React.FormEvent) => {
       e.preventDefault();
       if (!input.trim() || isLoading) return;
 
@@ -105,30 +105,8 @@ function Chat({ config, onOpenSettings }: ChatProps): React.JSX.Element {
       setIsLoading(true);
 
       try {
-        const response = await fetch(`${config.url}/chat/completions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${config.apiKey}`
-          },
-          body: JSON.stringify({
-            model: config.model,
-            messages: [...messages, userMessage].map((m) => ({
-              role: m.role,
-              content: m.content
-            })),
-            stream: true
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-        let assistantContent = "";
         const assistantMessageId = (Date.now() + 1).toString();
+        let assistantContent = "";
 
         setMessages((prev) => [
           ...prev,
@@ -139,33 +117,20 @@ function Chat({ config, onOpenSettings }: ChatProps): React.JSX.Element {
           }
         ]);
 
-        while (reader) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        // Use type-safe IPC to call AI API from main process
+        const stream = ipc.sendGenerator("chatCompletion", {
+          config,
+          messages: [...messages, userMessage]
+        });
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split("\n");
-
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const data = line.slice(6);
-              if (data === "[DONE]") continue;
-
-              try {
-                const parsed = JSON.parse(data);
-                const delta = parsed.choices?.[0]?.delta?.content;
-                if (delta) {
-                  assistantContent += delta;
-                  setMessages((prev) =>
-                    prev.map((m) =>
-                      m.id === assistantMessageId ? { ...m, content: assistantContent } : m
-                    )
-                  );
-                }
-              } catch {
-                // Ignore parsing errors
-              }
-            }
+        for await (const chunk of stream) {
+          if (chunk.content) {
+            assistantContent += chunk.content;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMessageId ? { ...m, content: assistantContent } : m
+              )
+            );
           }
         }
       } catch (error) {
@@ -175,7 +140,7 @@ function Chat({ config, onOpenSettings }: ChatProps): React.JSX.Element {
           {
             id: Date.now().toString(),
             role: "assistant",
-            content: "Error: Failed to get response from AI."
+            content: `Error: ${error instanceof Error ? error.message : "Failed to get response from AI."}`
           }
         ]);
       } finally {
@@ -190,7 +155,6 @@ function Chat({ config, onOpenSettings }: ChatProps): React.JSX.Element {
   const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      // make form submit
       formRef.current?.requestSubmit();
     }
   };

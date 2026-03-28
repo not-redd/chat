@@ -1,9 +1,18 @@
-import { join } from "path";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
-import { app, shell, BrowserWindow, ipcMain } from "electron";
+import { app, shell, BrowserWindow } from "electron";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 import icon from "../../resources/icon.png?asset";
+import type { MainMessage, RenderMessage } from "../shared/ipc-types";
+import { callAIAPI } from "./ai-service";
+import { IPCMain } from "./ipc-main";
+
+// Initialize IPC for type-safe communication
+const ipc = new IPCMain<RenderMessage, MainMessage>();
 
 function createWindow(): void {
   // Create the browser window.
@@ -52,8 +61,10 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window);
   });
 
-  // IPC test
-  ipcMain.on("ping", () => console.log("pong"));
+  // Register IPC handlers
+  ipc.on("chatCompletion", (request) => {
+    return callAIAPI(request);
+  });
 
   createWindow();
 
