@@ -2,11 +2,26 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
-import { app, shell, BrowserWindow } from "electron";
+import { app, shell, BrowserWindow, protocol } from "electron";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { streamText } from "ai";
 
 import icon from "../../resources/icon.png?asset";
+
+// setup custom protocols handler - must be called before app is ready
+protocol.registerSchemesAsPrivileged([
+	{
+		scheme: "app",
+		privileges: {
+			standard: true,
+			secure: true,
+			allowServiceWorkers: true,
+			supportFetchAPI: true
+		}
+	}
+]);
 
 function createWindow(): void {
 	// Create the browser window.
@@ -62,6 +77,97 @@ app.whenReady().then(() => {
 		// On macOS it's common to re-create a window in the app when the
 		// dock icon is clicked and there are no other windows open.
 		if (BrowserWindow.getAllWindows().length === 0) createWindow();
+	});
+
+	// Setup AI provider
+	const baseURL =
+		"https://gateway.ai.cloudflare.com/v1/b016ee0f55f7977d58c34e3b23862e0e/opencode/custom-oc/zen/go/v1";
+	const apiKey = process.env.OPENAI_COMPATIBLE_API_KEY;
+	const modelName = "kimi-k2.5";
+
+	const provider = createOpenAICompatible({
+		baseURL,
+		apiKey,
+		name: "opencode"
+	});
+
+	const model = provider(modelName);
+
+	protocol.handle("app", async (request) => {
+		const url = new URL(request.url);
+		console.log("Protocol request:", request.url, "pathname:", url.pathname);
+
+		// OpenAI-compatible chat completions endpoint
+		if (url.pathname === "/v1/chat/completions" && request.method === "POST") {
+			const body = await request.json();
+			const { messages, stream = false } = body;
+
+			const result = streamText({
+				model,
+				messages,
+				onChunk: (chunk) => {
+					console.log("chunk", chunk);
+				}
+			});
+
+			if (stream) {
+				// Return SSE stream in OpenAI format
+				const encoder = new TextEncoder();
+				const readableStream = new ReadableStream({
+					async start(controller) {
+						try {
+							for await (const chunk of result.textStream) {
+								const data = {
+									choices: [
+										{
+											delta: { content: chunk },
+											index: 0,
+											finish_reason: null
+										}
+									]
+								};
+								controller.enqueue(
+									encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
+								);
+							}
+							// Send done marker
+							controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+							controller.close();
+						} catch (error) {
+							controller.error(error);
+						}
+					}
+				});
+
+				return new Response(readableStream, {
+					headers: {
+						"Content-Type": "text/event-stream",
+						"Cache-Control": "no-cache",
+						Connection: "keep-alive"
+					}
+				});
+			} else {
+				// Non-streaming response
+				const text = await result.text;
+				return new Response(
+					JSON.stringify({
+						choices: [
+							{
+								message: { role: "assistant", content: text },
+								index: 0,
+								finish_reason: "stop"
+							}
+						]
+					}),
+					{
+						headers: { "Content-Type": "application/json" }
+					}
+				);
+			}
+		}
+
+		// For other app:// requests, continue to file system
+		return new Response("Not Found", { status: 404 });
 	});
 });
 
