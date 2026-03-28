@@ -7,13 +7,6 @@ import { app, shell, BrowserWindow } from "electron";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 import icon from "../../resources/icon.png?asset";
-import type { MainMessage, RenderMessage } from "../shared/ipc-types";
-import { callAIAPI, setIPCInstance } from "./ai-service";
-import { IPCMain } from "./ipc-main";
-
-// Initialize IPC for type-safe communication
-const ipc = new IPCMain<RenderMessage, MainMessage>();
-setIPCInstance(ipc);
 
 function createWindow(): void {
 	// Create the browser window.
@@ -63,10 +56,6 @@ app.whenReady().then(() => {
 	});
 
 	// Register IPC handlers
-	ipc.on("chatCompletion", (request) => {
-		return callAIAPI(request);
-	});
-
 	createWindow();
 
 	app.on("activate", function () {
