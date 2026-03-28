@@ -24,8 +24,10 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "ai": "^6.0.138",
-    "electron-updater": "^6.3.9"
+    "@tailwindcss/vite": "^4.2.2",
+    "@tanstack/react-router": "^1.168.4",
+    "electron-updater": "^6.3.9",
+    "tailwindcss": "^4.2.2"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",
@@ -35,6 +37,7 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "ai": "^6.0.138",
     "electron": "^39.2.6",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",

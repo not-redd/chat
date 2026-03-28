@@ -4,8 +4,22 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "electron-vite";
 
 export default defineConfig({
-  main: {},
-  preload: {},
+  main: {
+    build: {
+      externalizeDeps: true,
+      rollupOptions: {
+        external: ["electron"]
+      }
+    }
+  },
+  preload: {
+    build: {
+      externalizeDeps: true,
+      rollupOptions: {
+        external: ["electron"]
+      }
+    }
+  },
   renderer: {
     resolve: {
       alias: {
