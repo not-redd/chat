@@ -12,7 +12,8 @@ export default defineConfig({
 			rollupOptions: {
 				external: ["electron"]
 			}
-		}
+		},
+		envPrefix: "OPENAI_COMPATIBLE_"
 	},
 	preload: {
 		build: {
