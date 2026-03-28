@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useEffect, useState } from "react";
+import { Streamdown } from "streamdown";
 
 interface Message {
 	id: string;
@@ -168,11 +169,15 @@ function RouteComponent() {
 										Reasoning
 									</summary>
 									<div className="mt-2 p-2 bg-gray-900/50 rounded-lg text-gray-300">
-										<p className="whitespace-pre-wrap">{message.reasoning}</p>
+										<Streamdown className="prose prose-invert prose-sm max-w-none">
+											{message.reasoning}
+										</Streamdown>
 									</div>
 								</details>
 							)}
-							<p className="whitespace-pre-wrap">{message.content}</p>
+							<Streamdown className="prose prose-invert max-w-none">
+								{message.content}
+							</Streamdown>
 						</div>
 					</div>
 				))}
