@@ -6,7 +6,7 @@ import { app, shell, BrowserWindow, protocol } from "electron";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { streamText } from "ai";
+import { streamText, createUIMessageStreamResponse } from "ai";
 
 import icon from "../../resources/icon.png?asset";
 
@@ -97,92 +97,25 @@ app.whenReady().then(() => {
 		const url = new URL(request.url);
 		console.log("Protocol request:", request.url, "pathname:", url.pathname);
 
-		// OpenAI-compatible chat completions endpoint
-		if (url.pathname === "/v1/chat/completions" && request.method === "POST") {
+		// AI SDK /api/chat endpoint
+		if (url.pathname === "/api/chat" && request.method === "POST") {
 			const body = await request.json();
-			const { messages, stream = false, extra_body } = body;
+			const { messages, enable_reasoning } = body;
 
 			const result = streamText({
 				model,
 				messages,
 				providerOptions: {
 					opencode: {
-						enable_reasoning: extra_body?.enable_reasoning ?? false
+						enable_reasoning: enable_reasoning ?? false
 					}
 				}
 			});
 
-			if (stream) {
-				// Return SSE stream in OpenAI format
-				const encoder = new TextEncoder();
-				const readableStream = new ReadableStream({
-					async start(controller) {
-						try {
-							// Consume fullStream to get all events including reasoning
-							for await (const chunk of result.fullStream) {
-								if (chunk.type === "text-delta") {
-									const data = {
-										choices: [
-											{
-												delta: { content: chunk.text },
-												index: 0,
-												finish_reason: null
-											}
-										]
-									};
-									controller.enqueue(
-										encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
-									);
-								} else if (chunk.type === "reasoning-delta") {
-									const data = {
-										choices: [
-											{
-												delta: { reasoning: chunk.text },
-												index: 0,
-												finish_reason: null
-											}
-										]
-									};
-									controller.enqueue(
-										encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
-									);
-								}
-							}
-
-							// Send done marker
-							controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-							controller.close();
-						} catch (error) {
-							controller.error(error);
-						}
-					}
-				});
-
-				return new Response(readableStream, {
-					headers: {
-						"Content-Type": "text/event-stream",
-						"Cache-Control": "no-cache",
-						Connection: "keep-alive"
-					}
-				});
-			} else {
-				// Non-streaming response
-				const text = await result.text;
-				return new Response(
-					JSON.stringify({
-						choices: [
-							{
-								message: { role: "assistant", content: text },
-								index: 0,
-								finish_reason: "stop"
-							}
-						]
-					}),
-					{
-						headers: { "Content-Type": "application/json" }
-					}
-				);
-			}
+			// Return AI SDK UIMessage stream response
+			return createUIMessageStreamResponse({
+				stream: result.toUIMessageStream()
+			});
 		}
 
 		// For other app:// requests, continue to file system

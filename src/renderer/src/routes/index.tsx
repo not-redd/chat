@@ -1,22 +1,49 @@
+import { useChat } from "@ai-sdk/react";
 import { createFileRoute } from "@tanstack/react-router";
+import { DefaultChatTransport, type UIMessage, type TextUIPart, type ReasoningUIPart } from "ai";
 import { useRef, useEffect, useState } from "react";
 import { Streamdown } from "streamdown";
-
-interface Message {
-	id: string;
-	role: "user" | "assistant";
-	content: string;
-	reasoning?: string;
-}
 
 export const Route = createFileRoute("/")({
 	component: RouteComponent
 });
 
+// Convert UIMessages to ModelMessages format for the backend
+function convertToModelMessages(messages: UIMessage[]) {
+	return messages.map((msg) => {
+		const textParts = msg.parts?.filter((part): part is TextUIPart => part.type === "text");
+		const content = textParts?.map((p) => p.text).join("") ?? "";
+		return {
+			role: msg.role,
+			content
+		};
+	});
+}
+
 function RouteComponent() {
-	const [messages, setMessages] = useState<Message[]>([]);
+	const transport = new DefaultChatTransport({
+		api: "app://localhost/api/chat",
+		body: {
+			enable_reasoning: true
+		},
+		prepareSendMessagesRequest: async ({ messages }) => {
+			// Convert UIMessages to ModelMessages before sending
+			const modelMessages = convertToModelMessages(messages);
+			return {
+				body: {
+					messages: modelMessages,
+					enable_reasoning: true
+				}
+			};
+		}
+	});
+
+	const { messages, sendMessage, status } = useChat({
+		transport
+	});
+
 	const [input, setInput] = useState("");
-	const [isLoading, setIsLoading] = useState(false);
+
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 
 	const scrollToBottom = () => {
@@ -27,112 +54,32 @@ function RouteComponent() {
 		scrollToBottom();
 	}, [messages]);
 
+	const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+		setInput(e.target.value);
+	};
+
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
-		if (!input.trim() || isLoading) return;
+		if (!input.trim() || status === "submitted" || status === "streaming") return;
 
-		const userMessage: Message = {
-			id: Date.now().toString(),
-			role: "user",
-			content: input.trim()
-		};
-
-		setMessages((prev) => [...prev, userMessage]);
+		await sendMessage({ text: input.trim() });
 		setInput("");
-		setIsLoading(true);
+	};
 
-		const assistantMessage: Message = {
-			id: (Date.now() + 1).toString(),
-			role: "assistant",
-			content: "",
-			reasoning: ""
-		};
+	const isLoading = status === "submitted" || status === "streaming";
 
-		setMessages((prev) => [...prev, assistantMessage]);
+	// Extract text from message parts
+	const getMessageText = (message: UIMessage) => {
+		const textParts = message.parts?.filter((part): part is TextUIPart => part.type === "text");
+		return textParts?.map((p) => p.text).join("") ?? "";
+	};
 
-		try {
-			const response = await fetch("app://localhost/v1/chat/completions", {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json"
-				},
-				body: JSON.stringify({
-					messages: [...messages, userMessage].map((m) => ({
-						role: m.role,
-						content: m.content
-					})),
-					stream: true,
-					extra_body: {
-						enable_reasoning: true
-					}
-				})
-			});
-
-			if (!response.body) {
-				throw new Error("No response body");
-			}
-
-			const reader = response.body.getReader();
-			const decoder = new TextDecoder();
-			let accumulatedContent = "";
-			let accumulatedReasoning = "";
-
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-
-				const chunk = decoder.decode(value, { stream: true });
-				const lines = chunk.split("\n").filter((line) => line.trim());
-
-				for (const line of lines) {
-					if (line.startsWith("data: ")) {
-						const data = line.slice(6);
-						if (data === "[DONE]") continue;
-
-						try {
-							const parsed = JSON.parse(data);
-							const content = parsed.choices?.[0]?.delta?.content;
-							const reasoning = parsed.choices?.[0]?.delta?.reasoning;
-
-							if (content) {
-								accumulatedContent += content;
-								setMessages((prev) =>
-									prev.map((m) =>
-										m.id === assistantMessage.id
-											? { ...m, content: accumulatedContent }
-											: m
-									)
-								);
-							}
-
-							if (reasoning) {
-								accumulatedReasoning += reasoning;
-								setMessages((prev) =>
-									prev.map((m) =>
-										m.id === assistantMessage.id
-											? { ...m, reasoning: accumulatedReasoning }
-											: m
-									)
-								);
-							}
-						} catch {
-							// Ignore parse errors
-						}
-					}
-				}
-			}
-		} catch (error) {
-			console.error("Chat error:", error);
-			setMessages((prev) =>
-				prev.map((m) =>
-					m.id === assistantMessage.id
-						? { ...m, content: "Error: Failed to get response" }
-						: m
-				)
-			);
-		} finally {
-			setIsLoading(false);
-		}
+	// Extract reasoning from message parts
+	const getReasoning = (message: UIMessage) => {
+		const reasoningParts = message.parts?.filter(
+			(part): part is ReasoningUIPart => part.type === "reasoning"
+		);
+		return reasoningParts?.map((p) => p.text).join("") ?? "";
 	};
 
 	return (
@@ -149,38 +96,43 @@ function RouteComponent() {
 						</p>
 					</div>
 				)}
-				{messages.map((message) => (
-					<div
-						key={message.id}
-						className={`flex ${
-							message.role === "user" ? "justify-end" : "justify-start"
-						}`}
-					>
+				{messages.map((message) => {
+					const messageText = getMessageText(message);
+					const reasoningText = getReasoning(message);
+
+					return (
 						<div
-							className={`max-w-[80%] rounded-2xl px-4 py-3 space-y-2 ${
-								message.role === "user"
-									? "bg-blue-600 text-white"
-									: "bg-gray-800 text-gray-100"
+							key={message.id}
+							className={`flex ${
+								message.role === "user" ? "justify-end" : "justify-start"
 							}`}
 						>
-							{message.reasoning && message.role === "assistant" && (
-								<details className="text-sm">
-									<summary className="cursor-pointer text-gray-400 hover:text-gray-300 font-medium">
-										Reasoning
-									</summary>
-									<div className="mt-2 p-2 bg-gray-900/50 rounded-lg text-gray-300">
-										<Streamdown className="prose prose-invert prose-sm max-w-none">
-											{message.reasoning}
-										</Streamdown>
-									</div>
-								</details>
-							)}
-							<Streamdown className="prose prose-invert max-w-none">
-								{message.content}
-							</Streamdown>
+							<div
+								className={`max-w-[80%] rounded-2xl px-4 py-3 space-y-2 ${
+									message.role === "user"
+										? "bg-blue-600 text-white"
+										: "bg-gray-800 text-gray-100"
+								}`}
+							>
+								{reasoningText && message.role === "assistant" && (
+									<details className="text-sm">
+										<summary className="cursor-pointer text-gray-400 hover:text-gray-300 font-medium">
+											Reasoning
+										</summary>
+										<div className="mt-2 p-2 bg-gray-900/50 rounded-lg text-gray-300">
+											<Streamdown className="prose prose-invert prose-sm max-w-none">
+												{reasoningText}
+											</Streamdown>
+										</div>
+									</details>
+								)}
+								<Streamdown className="prose prose-invert max-w-none">
+									{messageText}
+								</Streamdown>
+							</div>
 						</div>
-					</div>
-				))}
+					);
+				})}
 				{isLoading && (
 					<div className="flex justify-start">
 						<div className="bg-gray-800 text-gray-100 rounded-2xl px-4 py-3">
@@ -206,7 +158,7 @@ function RouteComponent() {
 					<input
 						type="text"
 						value={input}
-						onChange={(e) => setInput(e.target.value)}
+						onChange={handleInputChange}
 						placeholder="Type your message..."
 						disabled={isLoading}
 						className="flex-1 px-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
