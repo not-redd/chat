@@ -34,8 +34,63 @@ interface ChatTransport {
 	}) => Promise<ReadableStream<UIMessageChunk> | null>;
 }
 
+// Global stream registry to handle chunks that arrive before stream is created
+const streamRegistry = new Map<
+	string,
+	{
+		chunks: Array<StreamChunkMessage | StreamErrorMessage>;
+		controller: ReadableStreamDefaultController<UIMessageChunk> | null;
+		isReady: boolean;
+	}
+>();
+
+// Set up global IPC handlers once
+let isGlobalHandlerSetup = false;
+
+function setupGlobalHandlers(): void {
+	if (isGlobalHandlerSetup) return;
+	isGlobalHandlerSetup = true;
+
+	ipc.on("streamChunk", (message: StreamChunkMessage) => {
+		const registry = streamRegistry.get(message.streamId);
+		if (!registry) return;
+
+		if (!registry.isReady || !registry.controller) {
+			registry.chunks.push(message);
+		} else {
+			const controller = registry.controller;
+			if (message.chunk.done) {
+				controller.enqueue({ type: "text-end", id: message.streamId });
+				controller.close();
+				streamRegistry.delete(message.streamId);
+			} else {
+				controller.enqueue({
+					type: "text-delta",
+					id: message.streamId,
+					delta: message.chunk.content
+				});
+			}
+		}
+	});
+
+	ipc.on("streamError", (message: StreamErrorMessage) => {
+		const registry = streamRegistry.get(message.streamId);
+		if (!registry) return;
+
+		if (!registry.isReady || !registry.controller) {
+			registry.chunks.push(message);
+		} else if (registry.controller) {
+			registry.controller.error(new Error(message.error));
+			streamRegistry.delete(message.streamId);
+		}
+	});
+}
+
 export function useElectronChat(options: UseElectronChatOptions): UseChatHelpers<UIMessage> {
 	const { config, id, initialMessages } = options;
+
+	// Set up global handlers
+	setupGlobalHandlers();
 
 	// Create custom transport that uses IPC
 	const chat = useMemo<Chat<UIMessage>>(() => {
@@ -43,102 +98,90 @@ export function useElectronChat(options: UseElectronChatOptions): UseChatHelpers
 			sendMessages: async ({ chatId, messages }): Promise<ReadableStream<UIMessageChunk>> => {
 				const streamId = `${chatId}-${Date.now()}`;
 
+				// Register stream in global registry BEFORE sending request
+				streamRegistry.set(streamId, {
+					chunks: [],
+					controller: null,
+					isReady: false
+				});
+
+				// Prepare the request
+				const request: ChatCompletionRequest = {
+					config,
+					messages: messages
+						.filter((m) => m.role === "user" || m.role === "assistant")
+						.map((m) => {
+							const textParts = m.parts
+								.filter((p) => p.type === "text")
+								.map((p) => (p as { text: string }).text);
+							return {
+								id: m.id,
+								role: m.role as "user" | "assistant",
+								content: textParts.join("")
+							};
+						}),
+					streamId
+				};
+
+				// Send the IPC request
+				ipc.send("chatCompletion", request).catch((error: Error) => {
+					const registry = streamRegistry.get(streamId);
+					if (registry && !registry.isReady) {
+						registry.chunks.push({
+							streamId,
+							error: error.message
+						} as StreamErrorMessage);
+					}
+				});
+
+				// Return the stream
 				return new ReadableStream<UIMessageChunk>({
 					start(controller) {
-						console.log("[Renderer] Stream started for streamId:", streamId);
+						const registry = streamRegistry.get(streamId);
+						if (!registry) {
+							controller.error(new Error("Stream registry not found"));
+							return;
+						}
 
-						// Send text-start chunk first (required by AI SDK)
+						// Store controller
+						registry.controller = controller;
+
+						// Send text-start
 						controller.enqueue({
 							type: "text-start",
 							id: streamId
 						});
-						console.log("[Renderer] Sent text-start chunk");
 
-						// Handle incoming chunks from IPC
-						const handleChunk = (message: StreamChunkMessage): void => {
-							if (message.streamId !== streamId) return;
+						// Mark as ready
+						registry.isReady = true;
 
-							if (message.chunk.done) {
-								console.log("[Renderer] Received done chunk, sending text-end");
-								// Send text-end chunk before closing
-								controller.enqueue({
-									type: "text-end",
-									id: streamId
-								});
-								controller.close();
-								cleanup();
-							} else {
-								console.log(
-									"[Renderer] Received delta chunk:",
-									message.chunk.content.slice(0, 30)
-								);
-								// Send text-delta chunk
-								controller.enqueue({
-									type: "text-delta",
-									id: streamId,
-									delta: message.chunk.content
-								});
+						// Process any pending chunks
+						while (registry.chunks.length > 0) {
+							const message = registry.chunks.shift()!;
+
+							if ("chunk" in message) {
+								if (message.chunk.done) {
+									controller.enqueue({ type: "text-end", id: streamId });
+									controller.close();
+									streamRegistry.delete(streamId);
+									return;
+								} else {
+									controller.enqueue({
+										type: "text-delta",
+										id: streamId,
+										delta: message.chunk.content
+									});
+								}
+							} else if ("error" in message) {
+								controller.error(new Error(message.error));
+								streamRegistry.delete(streamId);
+								return;
 							}
-						};
-
-						// Handle errors from IPC
-						const handleError = (message: StreamErrorMessage): void => {
-							if (message.streamId !== streamId) return;
-							controller.error(new Error(message.error));
-							cleanup();
-						};
-
-						// Subscribe to IPC events
-						const unsubscribeChunk = ipc.on("streamChunk", handleChunk);
-						const unsubscribeError = ipc.on("streamError", handleError);
-
-						const cleanup = (): void => {
-							unsubscribeChunk();
-							unsubscribeError();
-						};
-
-						// Convert UIMessages to our Message format and start the stream
-						const request: ChatCompletionRequest = {
-							config,
-							messages: messages
-								.filter((m) => m.role === "user" || m.role === "assistant")
-								.map((m) => {
-									// Extract text content from parts
-									const textParts = m.parts
-										.filter((p) => p.type === "text")
-										.map((p) => (p as { text: string }).text);
-									const content = textParts.join("");
-
-									return {
-										id: m.id,
-										role: m.role as "user" | "assistant",
-										content
-									};
-								}),
-							streamId
-						};
-
-						// Send the request via IPC
-						console.log("[Renderer] Sending chatCompletion IPC request");
-						ipc.send("chatCompletion", request)
-							.then(() => {
-								console.log(
-									"[Renderer] chatCompletion IPC request sent successfully"
-								);
-							})
-							.catch((error: Error) => {
-								console.error(
-									"[Renderer] chatCompletion IPC request failed:",
-									error
-								);
-								controller.error(error);
-								cleanup();
-							});
+						}
 					}
 				});
 			},
 			reconnectToStream: async (): Promise<ReadableStream<UIMessageChunk> | null> => {
-				// We don't support stream reconnection in this simple implementation
 				return null;
 			}
 		};
