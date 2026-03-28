@@ -36,12 +36,11 @@ export interface StreamErrorMessage {
 }
 
 // Type for function that can be called via IPC
-export type IPCFunction = (
-	...args: unknown[]
-) => unknown | Promise<unknown> | AsyncGenerator<unknown, void, unknown>;
+export type IPCFunction = (...args: unknown[]) => AsyncGenerator<unknown, void, unknown>;
 
 // Type for stored listener functions
-export type ListenerFunction = (...args: unknown[]) => Promise<unknown> | unknown;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type ListenerFunction = (...args: any[]) => Promise<any>;
 
 // Messages from renderer to main process
 export interface RenderMessage {

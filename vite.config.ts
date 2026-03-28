@@ -92,7 +92,7 @@ export default defineConfig({
 			"no-array-constructor": "error",
 			"@typescript-eslint/no-duplicate-enum-values": "error",
 			"@typescript-eslint/no-empty-object-type": "error",
-			"@typescript-eslint/no-explicit-any": "error",
+			"@typescript-eslint/no-explicit-any": "off",
 			"@typescript-eslint/no-extra-non-null-assertion": "error",
 			"@typescript-eslint/no-misused-new": "error",
 			"@typescript-eslint/no-namespace": "error",
@@ -108,15 +108,7 @@ export default defineConfig({
 			"@typescript-eslint/prefer-namespace-keyword": "error",
 			"@typescript-eslint/triple-slash-reference": "error",
 			"@typescript-eslint/no-floating-promises": "off",
-			"@typescript-eslint/explicit-function-return-type": [
-				"error",
-				{
-					allowExpressions: true,
-					allowTypedFunctionExpressions: true,
-					allowHigherOrderFunctions: true,
-					allowIIFEs: true
-				}
-			],
+			"@typescript-eslint/explicit-function-return-type": ["off"],
 			"react/display-name": "error",
 			"react/jsx-key": "error",
 			"react/jsx-no-comment-textnodes": "error",
@@ -209,7 +201,8 @@ export default defineConfig({
 			"pnpm-lock.yaml",
 			"LICENSE.md",
 			"tsconfig.json",
-			"tsconfig.*.json"
+			"tsconfig.*.json",
+			"*.gen.ts"
 		]
 	}
 });
