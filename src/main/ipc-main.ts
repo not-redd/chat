@@ -4,69 +4,69 @@ import { BrowserWindow, ipcMain, IpcMainInvokeEvent } from "electron";
 import type { IPCPayload, IPCResponse, ListenerFunction, MessageObj } from "../shared/ipc-types";
 
 export class IPCMain<
-    MessageType extends MessageObj<MessageType>,
-    BackgroundMessageType extends MessageObj<BackgroundMessageType>
+	MessageType extends MessageObj<MessageType>,
+	BackgroundMessageType extends MessageObj<BackgroundMessageType>
 > {
-    channel: string;
-    listeners: Partial<Record<keyof MessageType, ListenerFunction>> = {};
+	channel: string;
+	listeners: Partial<Record<keyof MessageType, ListenerFunction>> = {};
 
-    constructor(channel = "IPC-bridge") {
-        this.channel = channel;
-        this._bindMessage();
-    }
+	constructor(channel = "IPC-bridge") {
+		this.channel = channel;
+		this._bindMessage();
+	}
 
-    on<T extends keyof MessageType>(
-        name: T,
-        fn: (...args: Parameters<MessageType[T]>) => ReturnType<MessageType[T]>
-    ): void {
-        if (this.listeners[name]) throw new Error(`Message handler ${String(name)} already exists`);
-        this.listeners[name] = fn as ListenerFunction;
-    }
+	on<T extends keyof MessageType>(
+		name: T,
+		fn: (...args: Parameters<MessageType[T]>) => ReturnType<MessageType[T]>
+	): void {
+		if (this.listeners[name]) throw new Error(`Message handler ${String(name)} already exists`);
+		this.listeners[name] = fn as ListenerFunction;
+	}
 
-    off<T extends keyof MessageType>(action: T): void {
-        if (this.listeners[action]) {
-            delete this.listeners[action];
-        }
-    }
+	off<T extends keyof MessageType>(action: T): void {
+		if (this.listeners[action]) {
+			delete this.listeners[action];
+		}
+	}
 
-    async send<T extends keyof BackgroundMessageType>(
-        name: T,
-        ...payload: Parameters<BackgroundMessageType[T]>
-    ): Promise<void> {
-        const windows = BrowserWindow.getAllWindows();
-        windows.forEach((window) => {
-            window.webContents.send(this.channel, {
-                name,
-                payload
-            });
-        });
-    }
+	async send<T extends keyof BackgroundMessageType>(
+		name: T,
+		...payload: Parameters<BackgroundMessageType[T]>
+	): Promise<void> {
+		const windows = BrowserWindow.getAllWindows();
+		windows.forEach((window) => {
+			window.webContents.send(this.channel, {
+				name,
+				payload
+			});
+		});
+	}
 
-    private _bindMessage(): void {
-        ipcMain.handle(this.channel, this._handleReceivingMessage.bind(this));
-    }
+	private _bindMessage(): void {
+		ipcMain.handle(this.channel, this._handleReceivingMessage.bind(this));
+	}
 
-    private async _handleReceivingMessage(
-        _event: IpcMainInvokeEvent,
-        payload: IPCPayload
-    ): Promise<IPCResponse<unknown>> {
-        try {
-            const handler = this.listeners[payload.name as keyof MessageType];
-            if (handler) {
-                const result = await handler(...payload.payload);
+	private async _handleReceivingMessage(
+		_event: IpcMainInvokeEvent,
+		payload: IPCPayload
+	): Promise<IPCResponse<unknown>> {
+		try {
+			const handler = this.listeners[payload.name as keyof MessageType];
+			if (handler) {
+				const result = await handler(...payload.payload);
 
-                return {
-                    type: "success",
-                    result
-                };
-            } else {
-                throw new Error(`Unknown IPC message ${String(payload.name)}`);
-            }
-        } catch (e) {
-            return {
-                type: "error",
-                error: e instanceof Error ? e.message : String(e)
-            };
-        }
-    }
+				return {
+					type: "success",
+					result
+				};
+			} else {
+				throw new Error(`Unknown IPC message ${String(payload.name)}`);
+			}
+		} catch (e) {
+			return {
+				type: "error",
+				error: e instanceof Error ? e.message : String(e)
+			};
+		}
+	}
 }

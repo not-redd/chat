@@ -4,77 +4,77 @@ import type { IPCPayload, IPCResponse, MessageObj } from "../../shared/ipc-types
 type UnsubscribeFunction = () => void;
 
 export class IPCRenderer<
-    MessageType extends MessageObj<MessageType>,
-    BackgroundMessageType extends MessageObj<BackgroundMessageType>
+	MessageType extends MessageObj<MessageType>,
+	BackgroundMessageType extends MessageObj<BackgroundMessageType>
 > {
-    channel: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    listeners: Partial<Record<keyof BackgroundMessageType, Array<(...args: any[]) => void>>> = {};
-    private unsubscribeMap: Map<string, UnsubscribeFunction> = new Map();
+	channel: string;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	listeners: Partial<Record<keyof BackgroundMessageType, Array<(...args: any[]) => void>>> = {};
+	private unsubscribeMap: Map<string, UnsubscribeFunction> = new Map();
 
-    constructor(channel = "IPC-bridge") {
-        this.channel = channel;
-        this._bindMessage();
-    }
+	constructor(channel = "IPC-bridge") {
+		this.channel = channel;
+		this._bindMessage();
+	}
 
-    async send<T extends keyof MessageType>(
-        name: T,
-        ...payload: Parameters<MessageType[T]>
-    ): Promise<Awaited<ReturnType<MessageType[T]>>> {
-        const ipcPayload: IPCPayload = {
-            name: String(name),
-            payload: payload as unknown[]
-        };
+	async send<T extends keyof MessageType>(
+		name: T,
+		...payload: Parameters<MessageType[T]>
+	): Promise<Awaited<ReturnType<MessageType[T]>>> {
+		const ipcPayload: IPCPayload = {
+			name: String(name),
+			payload: payload as unknown[]
+		};
 
-        const data = (await window.api.ipcInvoke(this.channel, ipcPayload)) as IPCResponse<unknown>;
+		const data = (await window.api.ipcInvoke(this.channel, ipcPayload)) as IPCResponse<unknown>;
 
-        if (data.type === "success") {
-            return data.result as Awaited<ReturnType<MessageType[T]>>;
-        } else {
-            throw new Error(data.error);
-        }
-    }
+		if (data.type === "success") {
+			return data.result as Awaited<ReturnType<MessageType[T]>>;
+		} else {
+			throw new Error(data.error);
+		}
+	}
 
-    on<T extends keyof BackgroundMessageType>(
-        name: T,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        fn: (...args: any[]) => void
-    ): UnsubscribeFunction {
-        const key = name as keyof BackgroundMessageType;
-        this.listeners[key] = this.listeners[key] || [];
-        this.listeners[key].push(fn);
+	on<T extends keyof BackgroundMessageType>(
+		name: T,
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		fn: (...args: any[]) => void
+	): UnsubscribeFunction {
+		const key = name as keyof BackgroundMessageType;
+		this.listeners[key] = this.listeners[key] || [];
+		this.listeners[key].push(fn);
 
-        return () => {
-            const handlers = this.listeners[key];
-            if (!handlers) return;
-            const index = handlers.indexOf(fn);
-            if (index >= 0) {
-                handlers.splice(index, 1);
-            }
-        };
-    }
+		return () => {
+			const handlers = this.listeners[key];
+			if (!handlers) return;
+			const index = handlers.indexOf(fn);
+			if (index >= 0) {
+				handlers.splice(index, 1);
+			}
+		};
+	}
 
-    private _handleReceivingMessage(payloadData: {
-        name: keyof BackgroundMessageType;
-        payload: unknown[];
-    }): void {
-        console.log("[IPCRenderer] Received message:", payloadData.name);
-        const { name, payload } = payloadData;
-        const handlers = this.listeners[name];
+	private _handleReceivingMessage(payloadData: {
+		name: keyof BackgroundMessageType;
+		payload: unknown[];
+	}): void {
+		console.log("[IPCRenderer] Received message:", payloadData.name);
+		const { name, payload } = payloadData;
+		const handlers = this.listeners[name];
 
-        if (handlers) {
-            for (const fn of handlers) {
-                fn(...payload);
-            }
-        }
-    }
+		if (handlers) {
+			for (const fn of handlers) {
+				fn(...payload);
+			}
+		}
+	}
 
-    private _bindMessage(): void {
-        const unsubscribe = window.api.ipcOn(this.channel, (data) => {
-            this._handleReceivingMessage(
-                data as { name: keyof BackgroundMessageType; payload: unknown[] }
-            );
-        });
-        this.unsubscribeMap.set(this.channel, unsubscribe);
-    }
+	private _bindMessage(): void {
+		const unsubscribe = window.api.ipcOn(this.channel, (data) => {
+			this._handleReceivingMessage(
+				data as { name: keyof BackgroundMessageType; payload: unknown[] }
+			);
+		});
+		this.unsubscribeMap.set(this.channel, unsubscribe);
+	}
 }
