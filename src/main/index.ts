@@ -6,9 +6,17 @@ import { app, shell, BrowserWindow, protocol } from "electron";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { streamText, createUIMessageStreamResponse } from "ai";
+import {
+	streamText,
+	createUIMessageStreamResponse,
+	convertToModelMessages,
+	UIMessage,
+	UIDataTypes,
+	UITools
+} from "ai";
 
 import icon from "../../resources/icon.png?asset";
+import { isAllowedOrigin } from "./security";
 
 // setup custom protocols handler - must be called before app is ready
 protocol.registerSchemesAsPrivileged([
@@ -33,8 +41,7 @@ function createWindow(): void {
 		...(process.platform === "linux" ? { icon } : {}),
 		webPreferences: {
 			preload: join(__dirname, "../preload/index.js"),
-			sandbox: false,
-			webSecurity: false
+			sandbox: false
 		}
 	});
 
@@ -97,14 +104,37 @@ app.whenReady().then(() => {
 		const url = new URL(request.url);
 		console.log("Protocol request:", request.url, "pathname:", url.pathname);
 
+		// Security: Validate request origin to prevent external pages from accessing app:// endpoints
+		const origin = request.headers.get("origin") || "";
+		const referrer = request.referrer || "";
+
+		const allowed = isAllowedOrigin(
+			{ origin, referrer },
+			is.dev,
+			process.env["ELECTRON_RENDERER_URL"]
+		);
+
+		if (!allowed) {
+			console.warn(
+				"Blocked request from unauthorized origin:",
+				origin,
+				"referrer:",
+				referrer
+			);
+			return new Response("Forbidden", { status: 403 });
+		}
+
 		// AI SDK /api/chat endpoint
 		if (url.pathname === "/api/chat" && request.method === "POST") {
-			const body = await request.json();
+			const body = (await request.json()) as {
+				messages: Omit<UIMessage<unknown, UIDataTypes, UITools>, "id">[];
+				enable_reasoning?: boolean;
+			};
 			const { messages, enable_reasoning } = body;
 
 			const result = streamText({
 				model,
-				messages,
+				messages: await convertToModelMessages(messages),
 				providerOptions: {
 					opencode: {
 						enable_reasoning: enable_reasoning ?? false

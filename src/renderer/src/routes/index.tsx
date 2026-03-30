@@ -8,33 +8,11 @@ export const Route = createFileRoute("/")({
 	component: RouteComponent
 });
 
-// Convert UIMessages to ModelMessages format for the backend
-function convertToModelMessages(messages: UIMessage[]) {
-	return messages.map((msg) => {
-		const textParts = msg.parts?.filter((part): part is TextUIPart => part.type === "text");
-		const content = textParts?.map((p) => p.text).join("") ?? "";
-		return {
-			role: msg.role,
-			content
-		};
-	});
-}
-
 function RouteComponent() {
 	const transport = new DefaultChatTransport({
 		api: "app://localhost/api/chat",
 		body: {
 			enable_reasoning: true
-		},
-		prepareSendMessagesRequest: async ({ messages }) => {
-			// Convert UIMessages to ModelMessages before sending
-			const modelMessages = convertToModelMessages(messages);
-			return {
-				body: {
-					messages: modelMessages,
-					enable_reasoning: true
-				}
-			};
 		}
 	});
 
